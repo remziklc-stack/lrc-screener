@@ -28,12 +28,7 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TELEGRAM_SEND_FILE: "1"
         run: |
           python lrc_cross_screener_fast.py
 
-      - name: Upload Excel
-        uses: actions/upload-artifact@v4
-        with:
-          name: LRC_Kesisme_Sonuclari
-          path: LRC_Kesisme_Sonuclari.xlsx
+     
