@@ -8,10 +8,10 @@
 #   - Perpetual:XXXUSDT.P
 # Sadece USDT pariteleri taranır, alfabetik sıralanır.
 
-import os
 import time
 import math
 from datetime import datetime, timezone
+import os
 
 import numpy as np
 import requests
@@ -35,45 +35,6 @@ TIMEFRAMES = {
 SLEEP_BETWEEN_REQUESTS = 0.06
 OUTPUT_FILE = "LRC_Kesisme_Sonuclari.xlsx"
 
-
-# ===================== TELEGRAM (OPSİYONEL) =====================
-# Repo Settings > Secrets and variables > Actions kısmına ekle:
-# - TELEGRAM_TOKEN   (BotFather token)
-# - TELEGRAM_CHAT_ID (senin chat id)
-# İstersen dosyayı da göndermek için:
-# - TELEGRAM_SEND_FILE = 1
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-TELEGRAM_SEND_FILE = os.getenv("TELEGRAM_SEND_FILE", "1").strip()  # "1" -> excel gönder
-
-def tg_send_message(text_msg: str):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        return False
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": text_msg,
-        "disable_web_page_preview": True,
-    }
-    try:
-        r = requests.post(url, data=payload, timeout=30)
-        return r.ok
-    except Exception:
-        return False
-
-def tg_send_document(file_path: str, caption: str = ""):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        return False
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-    try:
-        with open(file_path, "rb") as f:
-            files = {"document": f}
-            data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption}
-            r = requests.post(url, data=data, files=files, timeout=60)
-        return r.ok
-    except Exception:
-        return False
 # Stabil ve türev token filtreleri (istersen kapatabilirsin)
 STABLE_BASES = {
     "USDC", "FDUSD", "TUSD", "USDP", "DAI", "BUSD", "EUR", "EURI",
@@ -84,6 +45,43 @@ BANNED_SUBSTRINGS = ("UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT")
 # ===================== HTTP =====================
 session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0"})
+
+
+# ===================== TELEGRAM (opsiyonel) =====================
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_SEND_FILE = os.getenv("TELEGRAM_SEND_FILE", "0").strip() in ("1", "true", "TRUE", "yes", "YES")
+
+
+def tg_send_text(text: str) -> bool:
+    """Telegram'a düz metin gönderir. Token/ChatID yoksa sessizce False döner."""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        r = session.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=30)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def tg_send_file(filepath: str, caption: str = "") -> bool:
+    """Telegram'a dosya (document) gönderir. Token/ChatID yoksa sessizce False."""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    if not os.path.exists(filepath):
+        return False
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+        with open(filepath, "rb") as f:
+            files = {"document": f}
+            data = {"chat_id": TELEGRAM_CHAT_ID}
+            if caption:
+                data["caption"] = caption
+            r = session.post(url, data=data, files=files, timeout=60)
+        return r.status_code == 200
+    except Exception:
+        return False
 
 
 def get_json(url, timeout=25, max_retries=5):
@@ -325,31 +323,22 @@ def main():
     print("LRC hızlı tarama başladı:", start.isoformat(timespec="seconds"))
 
     rows = scan_markets()
+    # Excel her zaman üretilsin (kesişme yoksa sadece başlıklar olur).
+    write_excel(rows, OUTPUT_FILE)
+
     if rows:
-        write_excel(rows, OUTPUT_FILE)
         print(f"Toplam {len(rows)} kesişme kaydı yazıldı.")
 
-        # Telegram bildirimi (opsiyonel)
-        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-            total = len(rows)
-            lines_msg = []
-            lines_msg.append(f"LRC Kesişme Sonuçları: {total} kayıt")
-
-            preview_n = min(80, total)
-            for r0 in rows[:preview_n]:
-                lines_msg.append(f"{r0['Coin']} | {r0['Timeframe']} | {r0['CrossType']}")
-            if total > preview_n:
-                lines_msg.append(f"... (+{total - preview_n} kayıt daha)")
-
-            msg = "\n".join(lines_msg)
-            tg_send_message(msg)
-
-            if TELEGRAM_SEND_FILE == "1":
-                tg_send_document(OUTPUT_FILE, caption="LRC_Kesisme_Sonuclari.xlsx")
+        # Telegram bildirimi (varsa)
+        msg = f"LRC Kesişme: {len(rows)} kayıt bulundu. Dosya: {OUTPUT_FILE}"
+        tg_send_text(msg)
+        if TELEGRAM_SEND_FILE:
+            tg_send_file(OUTPUT_FILE, caption=msg)
     else:
         print("Hiç kesişme bulunamadı.")
-        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-            tg_send_message("LRC tarama: Bugün kesişme bulunamadı.")
+
+        # Telegram bildirimi (varsa)
+        tg_send_text("LRC Kesişme: Bugün (son 30 gün taraması) yeni kesişme bulunamadı.")
 
     end = datetime.now()
     print("Bitti:", end.isoformat(timespec="seconds"), "Süre(s):", (end - start).total_seconds())
