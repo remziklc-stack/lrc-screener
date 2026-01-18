@@ -8,6 +8,7 @@
 #   - Perpetual:XXXUSDT.P
 # Sadece USDT pariteleri taranır, alfabetik sıralanır.
 
+import os
 import time
 import math
 from datetime import datetime, timezone
@@ -34,6 +35,45 @@ TIMEFRAMES = {
 SLEEP_BETWEEN_REQUESTS = 0.06
 OUTPUT_FILE = "LRC_Kesisme_Sonuclari.xlsx"
 
+
+# ===================== TELEGRAM (OPSİYONEL) =====================
+# Repo Settings > Secrets and variables > Actions kısmına ekle:
+# - TELEGRAM_TOKEN   (BotFather token)
+# - TELEGRAM_CHAT_ID (senin chat id)
+# İstersen dosyayı da göndermek için:
+# - TELEGRAM_SEND_FILE = 1
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_SEND_FILE = os.getenv("TELEGRAM_SEND_FILE", "1").strip()  # "1" -> excel gönder
+
+def tg_send_message(text_msg: str):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": text_msg,
+        "disable_web_page_preview": True,
+    }
+    try:
+        r = requests.post(url, data=payload, timeout=30)
+        return r.ok
+    except Exception:
+        return False
+
+def tg_send_document(file_path: str, caption: str = ""):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
+    try:
+        with open(file_path, "rb") as f:
+            files = {"document": f}
+            data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption}
+            r = requests.post(url, data=data, files=files, timeout=60)
+        return r.ok
+    except Exception:
+        return False
 # Stabil ve türev token filtreleri (istersen kapatabilirsin)
 STABLE_BASES = {
     "USDC", "FDUSD", "TUSD", "USDP", "DAI", "BUSD", "EUR", "EURI",
@@ -288,8 +328,28 @@ def main():
     if rows:
         write_excel(rows, OUTPUT_FILE)
         print(f"Toplam {len(rows)} kesişme kaydı yazıldı.")
+
+        # Telegram bildirimi (opsiyonel)
+        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+            total = len(rows)
+            lines_msg = []
+            lines_msg.append(f"LRC Kesişme Sonuçları: {total} kayıt")
+
+            preview_n = min(80, total)
+            for r0 in rows[:preview_n]:
+                lines_msg.append(f"{r0['Coin']} | {r0['Timeframe']} | {r0['CrossType']}")
+            if total > preview_n:
+                lines_msg.append(f"... (+{total - preview_n} kayıt daha)")
+
+            msg = "\n".join(lines_msg)
+            tg_send_message(msg)
+
+            if TELEGRAM_SEND_FILE == "1":
+                tg_send_document(OUTPUT_FILE, caption="LRC_Kesisme_Sonuclari.xlsx")
     else:
         print("Hiç kesişme bulunamadı.")
+        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+            tg_send_message("LRC tarama: Bugün kesişme bulunamadı.")
 
     end = datetime.now()
     print("Bitti:", end.isoformat(timespec="seconds"), "Süre(s):", (end - start).total_seconds())
